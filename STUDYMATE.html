@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>StudyMate — Web Frontend</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 20px; color:#111 }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { display:flex; align-items:center; gap:10px; }
+    .card { border:1px solid #e6e6e6; padding:16px; border-radius:8px; margin-bottom:16px; background:#fff }
+    .files-list { margin-top:8px; }
+    .file-item { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed #eee; }
+    button { padding:8px 12px; border-radius:6px; border:1px solid #ccc; background:#f6f6f6; cursor:pointer }
+    button.primary { background:#0366d6; color:#fff; border-color:#0366d6 }
+    textarea { width:100%; min-height:70px; padding:8px; border-radius:6px; border:1px solid #ddd; resize:vertical }
+    .result { white-space:pre-wrap; background:#fafafa; padding:12px; border-radius:6px; border:1px solid #eee }
+    .small { font-size:0.9rem; color:#555 }
+    .passage { border-left:3px solid #0366d6; padding:8px 12px; margin:8px 0; background:#fff }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📚 StudyMate — Web Frontend</h1>
+
+    <div class="card" id="upload-card">
+      <h3>1) Upload PDF(s)</h3>
+      <input id="fileInput" type="file" accept="application/pdf" multiple />
+      <div style="margin-top:8px;">
+        <button id="uploadBtn" class="primary">Upload</button>
+        <span id="uploadStatus" class="small" style="margin-left:12px;"></span>
+      </div>
+
+      <div class="files-list" id="filesList"></div>
+    </div>
+
+    <div class="card" id="qa-card">
+      <h3>2) Ask a question</h3>
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <input id="docId" placeholder="Document ID (set after upload)" style="flex:0 0 260px; padding:8px; border-radius:6px; border:1px solid #ddd"/>
+        <select id="backendSelect" style="padding:8px; border-radius:6px;">
+          <option value="fallback">Simple Fallback</option>
+          <option value="hf">HuggingFace</option>
+          <option value="watsonx">IBM watsonx</option>
+        </select>
+      </div>
+
+      <textarea id="question" placeholder="Type your question about the uploaded PDFs..."></textarea>
+      <div style="margin-top:8px;">
+        <button id="askBtn" class="primary">Get Answer</button>
+        <span id="askStatus" class="small" style="margin-left:12px;"></span>
+      </div>
+    </div>
+
+    <div class="card" id="answer-card" style="display:none;">
+      <h3>Answer</h3>
+      <div id="answerText" class="result"></div>
+
+      <details style="margin-top:10px;">
+        <summary>Retrieved passages & citations</summary>
+        <div id="passagesArea"></div>
+      </details>
+    </div>
+
+    <div style="margin-top:24px;" class="small">
+      <strong>Backend API expectations</strong>
+      <ul>
+        <li><code>POST /upload</code> — multipart/form-data with file inputs. Returns JSON: <code>{ ok: true, doc_id: "abc123", files: ["a.pdf","b.pdf"] }</code></li>
+        <li><code>POST /ask</code> — JSON body <code>{ doc_id: "abc123", question: "What is X?", backend: "hf" }</code>. Returns JSON:
+          <pre>{ answer: "text", contexts: [{source:"a.pdf", chunk:12, text:"..." , score:0.84}], doc_id: "abc123" }</pre>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+<script>
+const fileInput = document.getElementById('fileInput');
+const uploadBtn = document.getElementById('uploadBtn');
+const filesList = document.getElementById('filesList');
+const uploadStatus = document.getElementById('uploadStatus');
+const askBtn = document.getElementById('askBtn');
+const questionEl = document.getElementById('question');
+const answerCard = document.getElementById('answer-card');
+const answerText = document.getElementById('answerText');
+const passagesArea = document.getElementById('passagesArea');
+const askStatus = document.getElementById('askStatus');
+const docIdInput = document.getElementById('docId');
+
+uploadBtn.addEventListener('click', async () => {
+  const files = fileInput.files;
+  if (!files || files.length === 0) {
+    alert('Select one or more PDFs first.');
+    return;
+  }
+
+  uploadStatus.textContent = 'Uploading...';
+  const form = new FormData();
+  for (const f of files) form.append('pdfs', f);
+
+  try {
+    // Replace /upload with your backend endpoint
+    const res = await fetch('/upload', { method: 'POST', body: form });
+    if (!res.ok) throw new Error('Upload failed: ' + res.statusText);
+    const data = await res.json();
+
+    if (data.ok) {
+      uploadStatus.textContent = 'Upload successful';
+      docIdInput.value = data.doc_id || '';
+      filesList.innerHTML = '';
+      if (data.files && Array.isArray(data.files)) {
+        data.files.forEach(fn => {
+          const div = document.createElement('div');
+          div.className = 'file-item';
+          div.innerHTML = <div>${fn}</div><div class="small">uploaded</div>;
+          filesList.appendChild(div);
+        });
+      } else {
+        filesList.textContent = 'Files uploaded.';
+      }
+    } else {
+      uploadStatus.textContent = 'Upload failed (backend returned error)';
+      alert(JSON.stringify(data));
+    }
+  } catch (err) {
+    uploadStatus.textContent = 'Upload error';
+    alert('Upload error: ' + err.message);
+    console.error(err);
+  }
+});
+
+askBtn.addEventListener('click', async () => {
+  const question = questionEl.value.trim();
+  const docId = docIdInput.value.trim();
+  const backend = document.getElementById('backendSelect').value;
+
+  if (!question) { alert('Please type a question.'); return; }
+  if (!docId) { alert('Set doc id after uploading (or use blank for default).'); return; }
+
+  askStatus.textContent = 'Waiting for answer...';
+  answerCard.style.display = 'none';
+  passagesArea.innerHTML = '';
+  answerText.textContent = '';
+
+  try {
+    const payload = { doc_id: docId, question, backend };
+    const res = await fetch('/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) throw new Error('Request failed: ' + res.statusText);
+    const data = await res.json();
+
+    // Expected: { answer: "...", contexts: [{ source, chunk, text, score }], doc_id }
+    answerCard.style.display = 'block';
+    answerText.textContent = data.answer || 'No answer returned';
+
+    if (Array.isArray(data.contexts)) {
+      passagesArea.innerHTML = '';
+      data.contexts.forEach((c, i) => {
+        const el = document.createElement('div');
+        el.className = 'passage';
+        el.innerHTML = `<div style="font-weight:600">${i+1}. ${c.source || 'unknown'} — chunk ${c.chunk ?? '-'} <span class="small" style="margin-left:8px;color:#666">score: ${ (c.score||0).toFixed(3) }</span></div>
+                        <div style="margin-top:6px">${escapeHtml(c.text || '')}</div>`;
+        passagesArea.appendChild(el);
+      });
+    } else {
+      passagesArea.innerHTML = '<div class="small">No contexts returned.</div>';
+    }
+
+    askStatus.textContent = 'Done';
+  } catch (err) {
+    askStatus.textContent = 'Error';
+    alert('Ask error: ' + err.message);
+    console.error(err);
+  }
+});
+
+// small helper
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
